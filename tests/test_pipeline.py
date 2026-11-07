@@ -37,6 +37,21 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual([r['csrna_minus'] for r in rows],[None,7,0,None,0,3])
         self.assertEqual(self.record['eligible_bases'],4)
         self.assertTrue(self.record['all_row_groups_verified'])
+    def test_resume_verification(self):
+        path=self.parquet/self.record['file'];original=path.read_bytes()
+        path.replace(path.with_suffix('.partial'))
+        (self.parquet/(self.meta['id']+'.json')).unlink()
+        result=export_one(self.fixed,self.parquet,self.meta,2,verify_workers=2)
+        self.assertEqual(path.read_bytes(),original)
+        self.assertEqual(result['sha256'],self.record['sha256'])
+    def test_corrupt_logical_values_fail_verification(self):
+        import pyarrow as pa
+        path=self.parquet/self.record['file'];table=pq.read_table(path)
+        table=table.set_column(table.schema.get_field_index('csrna_plus'),'csrna_plus',pa.array([None,999,5,None,0,1],type=pa.uint64()))
+        pq.write_table(table,path.with_suffix('.partial'),row_group_size=2)
+        path.unlink();(self.parquet/(self.meta['id']+'.json')).unlink()
+        with self.assertRaises(ValueError):export_one(self.fixed,self.parquet,self.meta,2,verify_workers=2)
+        self.assertFalse(path.exists())
     def test_vector_formats(self):
         path=self.root/'vector.gz'
         for text in ('0\n005\n0\n12', '0\r\n5\r\n0\r\n12\r\n', '0.0\n5.0\n0.0\n12.0\n'):

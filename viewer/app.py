@@ -225,6 +225,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--port',type=int,default=8767)
     parser.add_argument('--host',default='127.0.0.1');args=parser.parse_args()
-    if not (DATA/'catalog.json').exists():parser.error('Build data_fixed first: .venv/bin/python ../data_fixed/build.py')
+    if not (DATA/'catalog.json').exists():parser.error('data_fixed/catalog.json is missing. Follow the repository preparation instructions before starting the viewer.')
     server=ThreadingHTTPServer((args.host,args.port),Handler)
     print(f'Coordinate viewer: http://{args.host}:{args.port}',flush=True);server.serve_forever()

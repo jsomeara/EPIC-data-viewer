@@ -1,10 +1,13 @@
 """Export seven coordinate-native Parquet files: one row per reference base."""
 import argparse
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor,ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
 import time
+import os
+import threading
+from functools import lru_cache
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -49,50 +52,72 @@ def batch(meta,c,mask,signal,dna,start,end):
     schema=pa.schema([pa.field(field.name,col.type,nullable=field.nullable) for field,col in zip(SCHEMA,columns)],metadata=SCHEMA.metadata)
     return pa.Table.from_arrays(columns,schema=schema)
 
-def export_one(root,out,meta,batch_size):
+def export_one(root,out,meta,batch_size,verify_workers=4):
     path=out/(meta['id']+'.parquet');record=out/(meta['id']+'.json')
     if path.exists() and record.exists():return json.loads(record.read_text())
     partial=path.with_suffix('.partial');dna_index=json.loads((root/(meta['assembly']+'.dna.json')).read_text())
-    writer=None;rows=0;eligible_count=0;sums=[0,0];nonzero=[0,0];checks=[];last=time.monotonic()
-    print('Exporting',meta['id'],'bases',sum(c['length'] for c in meta['contigs']),flush=True)
-    try:
-        with (root/(meta['assembly']+'.dna')).open('rb') as reference:
-            for c in meta['contigs']:
-                folder=root/meta['id']/c['id'];mask=np.fromfile(folder/'eligible.bin',dtype='<u8').reshape(-1,2)
-                size=(folder/'signal.bin').stat().st_size
-                signal=np.memmap(folder/'signal.bin',mode='r',dtype=SIGNAL) if size else np.empty(0,dtype=SIGNAL)
-                for j,key in enumerate(('plus','minus')):
-                    sums[j]+=int(signal[key].sum());nonzero[j]+=int(np.count_nonzero(signal[key]))
-                eligible_count+=int((mask[:,1]-mask[:,0]).sum())
-                reference.seek(dna_index[c['name']][0])
-                for start in range(0,c['length'],batch_size):
-                    end=min(start+batch_size,c['length']);dna=reference.read(end-start)
+    groups=[(c,start,min(start+batch_size,c['length'])) for c in meta['contigs'] for start in range(0,c['length'],batch_size)]
+    rows=sum(c['length'] for c in meta['contigs']);complete=False
+    if partial.exists():
+        try:
+            existing=pq.ParquetFile(partial)
+            complete=existing.metadata.num_rows==rows and existing.num_row_groups==len(groups)
+            del existing
+        except pa.ArrowInvalid:pass
+    @lru_cache(maxsize=32)
+    def arrays(contig_id):
+        folder=root/meta['id']/contig_id
+        mask=np.fromfile(folder/'eligible.bin',dtype='<u8').reshape(-1,2)
+        signal=np.memmap(folder/'signal.bin',mode='r',dtype=SIGNAL) if (folder/'signal.bin').stat().st_size else np.empty(0,dtype=SIGNAL)
+        return mask,signal
+    writer=None;last=time.monotonic();written=0
+    print(('Resuming verification' if complete else 'Exporting'),meta['id'],'bases',rows,flush=True)
+    with (root/(meta['assembly']+'.dna')).open('rb') as reference:
+        try:
+            if not complete:
+                for c,start,end in groups:
+                    mask,signal=arrays(c['id'])
+                    dna=os.pread(reference.fileno(),end-start,dna_index[c['name']][0]+start)
                     if len(dna)!=end-start:raise ValueError('Truncated DNA')
                     table=batch(meta,c,mask,signal,dna,start,end)
                     if writer is None:
                         writer=pq.ParquetWriter(partial,table.schema,compression='zstd',compression_level=3,
                                                use_dictionary=['assembly','organism','split','sequence_id','base'],
                                                column_encoding={'position':'DELTA_BINARY_PACKED'},write_page_checksum=True)
-                    writer.write_table(table,row_group_size=len(table));rows+=len(table)
-                    # Hash original logical row-group buffers for a full read-back comparison.
-                    checks.append(table_digest(table))
+                    writer.write_table(table,row_group_size=len(table));written+=len(table)
                     if time.monotonic()-last>15:
-                        print(meta['id'],rows,'bases written',flush=True);last=time.monotonic()
-        if writer:writer.close();writer=None
-        file=pq.ParquetFile(partial,page_checksum_verification=True)
-        assert file.metadata.num_rows==rows
-        print('Verifying',meta['id'],file.num_row_groups,'row groups',flush=True)
-        for i,expected in enumerate(checks):
-            if table_digest(file.read_row_group(i))!=expected:raise ValueError(f'Read-back mismatch: group {i}')
-        del file
-        partial.replace(path)
-        result={'file':path.name,'dataset':meta['id'],'rows':rows,'eligible_bases':eligible_count,
-                'count_sum_plus':sums[0],'count_sum_minus':sums[1],'nonzero_plus':nonzero[0],'nonzero_minus':nonzero[1],
-                'bytes':path.stat().st_size,'sha256':digest(path),'row_groups':len(checks),'all_row_groups_verified':True}
-        record.write_text(json.dumps(result,indent=2));print('Complete',path.name,result['bytes'],'bytes',flush=True)
-        return result
-    finally:
-        if writer:writer.close()
+                        print(meta['id'],written,'bases written',flush=True);last=time.monotonic()
+                if writer:writer.close();writer=None
+            # Independent readers avoid sharing mutable reader state between threads.
+            # Reconstruct every original row group from coordinate indexes, then compare
+            # all logical columns; batching and dictionary order do not alter meaning.
+            check=pq.ParquetFile(partial)
+            if check.metadata.num_rows!=rows or check.num_row_groups!=len(groups):raise ValueError('Wrong Parquet row/group count')
+            del check
+            local=threading.local()
+            def verify(i):
+                if not hasattr(local,'file'):local.file=pq.ParquetFile(partial,page_checksum_verification=True)
+                c,start,end=groups[i];mask,signal=arrays(c['id'])
+                dna=os.pread(reference.fileno(),end-start,dna_index[c['name']][0]+start)
+                expected=batch(meta,c,mask,signal,dna,start,end)
+                actual=local.file.read_row_group(i,use_threads=False)
+                if table_digest(actual)!=table_digest(expected):raise ValueError(f'Read-back mismatch: {meta["id"]} group {i}')
+            print('Verifying',meta['id'],len(groups),'row groups with',verify_workers,'threads',flush=True)
+            with ThreadPoolExecutor(max_workers=verify_workers) as pool:
+                for _ in pool.map(verify,range(len(groups))):pass
+        finally:
+            if writer:writer.close()
+    partial.replace(path)
+    sums=[0,0];nonzero=[0,0];eligible_count=0
+    for c in meta['contigs']:
+        mask,signal=arrays(c['id']);eligible_count+=int((mask[:,1]-mask[:,0]).sum())
+        for j,key in enumerate(('plus','minus')):
+            sums[j]+=int(signal[key].sum());nonzero[j]+=int(np.count_nonzero(signal[key]))
+    result={'file':path.name,'dataset':meta['id'],'rows':rows,'eligible_bases':eligible_count,
+            'count_sum_plus':sums[0],'count_sum_minus':sums[1],'nonzero_plus':nonzero[0],'nonzero_minus':nonzero[1],
+            'bytes':path.stat().st_size,'sha256':digest(path),'row_groups':len(groups),'all_row_groups_verified':True}
+    record.write_text(json.dumps(result,indent=2));print('Complete',path.name,result['bytes'],'bytes',flush=True)
+    return result
 
 def table_digest(table):
     import pyarrow.compute as pc
@@ -116,12 +141,12 @@ def table_digest(table):
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--fixed',type=Path,default=Path('data_fixed'))
     parser.add_argument('--output',type=Path,default=Path('parquet'));parser.add_argument('--dataset',action='append')
-    parser.add_argument('--batch-size',type=int,default=1_000_000);parser.add_argument('--workers',type=int,default=1);args=parser.parse_args()
+    parser.add_argument('--batch-size',type=int,default=1_000_000);parser.add_argument('--workers',type=int,default=1);parser.add_argument('--verify-workers',type=int,default=4);args=parser.parse_args()
     if args.batch_size<1:parser.error('batch size must be positive')
     args.output.mkdir(parents=True,exist_ok=True);catalog=json.loads((args.fixed/'catalog.json').read_text())
     jobs=[meta for meta in catalog if not args.dataset or meta['id'] in args.dataset]
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures=[pool.submit(export_one,args.fixed,args.output,meta,args.batch_size) for meta in jobs]
+        futures=[pool.submit(export_one,args.fixed,args.output,meta,args.batch_size,args.verify_workers) for meta in jobs]
         for future in futures:future.result()
     manifest={'format':'EPIC coordinate-native per-base v1','files':[json.loads(p.read_text()) for p in sorted(args.output.glob('*.json')) if p.name!='manifest.json']}
     temporary=args.output/'manifest.json.partial'

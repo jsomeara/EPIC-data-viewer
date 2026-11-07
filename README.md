@@ -57,7 +57,7 @@ Run these commands from the repository root:
 # Build the coordinate-native data directly from FASTA, whitelist, template, and pooled vector.
 .venv/bin/python prepare/from_raw.py --raw raw --output data_fixed
 
-# Export and fully verify the seven Parquet files. Use fewer workers on smaller machines.
+# Export and fully verify the seven Parquet files. Use fewer workers on smaller machines; `--verify-workers` controls read-back threads per file (default 4).
 .venv/bin/python prepare/export_parquet.py --fixed data_fixed --output parquet --workers 3
 ```
 
@@ -153,4 +153,4 @@ Synthetic tests need no EPIC data:
 node tests/test_plot.cjs
 ```
 
-The raw converter was additionally checked against the existing independently verified toy train/test data: every sparse signal/whitelist byte and the full reference DNA matched. The hosted export verifies all generated row groups. Tests cover raw-to-Parquet alignment, null versus zero, counts on both strands, download ranges, scroll zoom, Shift-drag, log scaling, and nucleotide rendering.
+The raw converter was additionally checked against all seven existing independently verified datasets: every sparse signal/whitelist byte and all six complete reference DNA hashes matched. The hosted export verifies all generated row groups. Tests cover raw-to-Parquet alignment, null versus zero, counts on both strands, download ranges, scroll zoom, Shift-drag, log scaling, and nucleotide rendering.
