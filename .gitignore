@@ -11,3 +11,9 @@ parquet/
 *.log
 .env
 .env.*
+*.dna
+*.bin
+*.gz
+*.zip
+*.tar
+*.fai

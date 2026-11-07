@@ -37,6 +37,17 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual([r['csrna_minus'] for r in rows],[None,7,0,None,0,3])
         self.assertEqual(self.record['eligible_bases'],4)
         self.assertTrue(self.record['all_row_groups_verified'])
+    def test_vector_formats(self):
+        path=self.root/'vector.gz'
+        for text in ('0\n005\n0\n12', '0\r\n5\r\n0\r\n12\r\n', '0.0\n5.0\n0.0\n12.0\n'):
+            with gzip.open(path,'wt') as stream:stream.write(text)
+            pieces=list(vector_nonzero(path))
+            self.assertEqual([int(v) for indices,_,_ in pieces for v in indices],[1,3])
+            self.assertEqual([int(v) for _,counts,_ in pieces for v in counts],[5,12])
+            self.assertEqual(sum(n for _,_,n in pieces),4)
+        for text in ('-1\n', 'nan\n', '0\n\n1\n', '9007199254740993\n'):
+            with gzip.open(path,'wt') as stream:stream.write(text)
+            with self.assertRaises(ValueError):list(vector_nonzero(path))
     def test_downloads_and_ranges(self):
         original=(app.DATA,app.DOWNLOADS);app.DATA=self.fixed;app.DOWNLOADS=self.parquet
         for function in (app.catalog,app.track,app.reference_index,app.peaks):function.cache_clear()

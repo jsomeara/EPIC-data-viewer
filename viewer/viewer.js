@@ -84,7 +84,7 @@ $('nextSignal').onclick=async()=>{
 };
 request('files','api/files','chartLoading').then(data=>{if(!data)return;for(const file of data){const option=document.createElement('option');option.value=file.id;option.textContent=`${file.organism} · ${file.split}`;$('dataset').append(option)}chooseDataset()});
 
-request('downloads','api/downloads').then(files=>{
+function loadDownloads(){request('downloads','api/downloads').then(files=>{
   if(!files)return;
   const fragment=document.createDocumentFragment();
   for(const file of files){
@@ -95,5 +95,7 @@ request('downloads','api/downloads').then(files=>{
     row.append(link,size);fragment.append(row);
   }
   if(!files.length){const text=document.createElement('p');text.className='muted';text.textContent='Parquet files are being prepared.';fragment.append(text)}
-  $('downloads').replaceChildren(fragment);
-});
+  $('downloads').replaceChildren(fragment);$('downloadManifest').hidden=!files.length;
+});}
+$('downloadMenu').ontoggle=()=>{if($('downloadMenu').open)loadDownloads()};
+loadDownloads();

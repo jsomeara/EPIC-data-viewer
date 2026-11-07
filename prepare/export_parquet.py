@@ -124,5 +124,7 @@ def main():
         futures=[pool.submit(export_one,args.fixed,args.output,meta,args.batch_size) for meta in jobs]
         for future in futures:future.result()
     manifest={'format':'EPIC coordinate-native per-base v1','files':[json.loads(p.read_text()) for p in sorted(args.output.glob('*.json')) if p.name!='manifest.json']}
-    (args.output/'manifest.json').write_text(json.dumps(manifest,indent=2))
+    temporary=args.output/'manifest.json.partial'
+    temporary.write_text(json.dumps(manifest,indent=2))
+    temporary.replace(args.output/'manifest.json')
 if __name__=='__main__':main()

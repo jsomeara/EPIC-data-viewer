@@ -68,6 +68,22 @@ def vector_nonzero(path):
             pending+=block;edge=pending.rfind(b'\n')+1
             if not edge:continue
             complete,pending=pending[:edge],pending[edge:]
+            normalized=complete.replace(b'\r\n',b'\n')
+            if not normalized.translate(None,b'0123456789\n'):
+                # The supplied vectors are overwhelmingly integer zeros. Scan positive
+                # digit runs and count intervening newlines instead of parsing billions of zeros.
+                if normalized.startswith(b'\n') or b'\n\n' in normalized:
+                    raise ValueError('Empty target vector line')
+                positions=[];counts=[];cursor=0;line=0
+                for match in re.finditer(rb'[1-9][0-9]*',normalized):
+                    line+=normalized.count(b'\n',cursor,match.start());cursor=match.end()
+                    value=int(match[0])
+                    if value>2**53:raise ValueError('Count exceeds exact integer range')
+                    positions.append(offset+line);counts.append(value)
+                length=normalized.count(b'\n')
+                yield np.asarray(positions,dtype=np.uint64),np.asarray(counts,dtype=np.uint64),length
+                offset+=length
+                continue
             values=np.fromstring(complete.decode('ascii'),dtype=np.float64,sep='\n')
             if len(values)!=complete.count(b'\n'):raise ValueError('Malformed target vector')
             if not np.all(np.isfinite(values)) or np.any(values<0) or np.any(values>2**53) or np.any(values!=np.floor(values)):
