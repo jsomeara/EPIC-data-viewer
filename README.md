@@ -120,7 +120,7 @@ for batch in data.scanner(filter=region, batch_size=4096).to_batches():
 .venv/bin/python viewer/app.py --port 8767
 ```
 
-Open http://127.0.0.1:8767. The viewer reads `data_fixed/`; verified downloads come from `parquet/manifest.json`. You can browse while the export is running; only completed, manifested downloads appear. The interface has a GitHub link and a panel for downloading the seven files and their checksum manifest.
+Open http://127.0.0.1:8767. The viewer reads `data_fixed/`; verified downloads come from `parquet/manifest.json`. You can browse while the export is running; only completed, manifested downloads appear. The interface has a GitHub link and a Downloads menu next to GitHub for the seven files and their checksum manifest.
 
 The chart uses canvas, viewport-only queries and multiresolution indexes. Scroll zooms, drag selects a zoom range, Shift-drag temporarily swaps zoom/pan, and double-click resets. The overview supports pan/resize. Log10(count + 1) is enabled by default, with raw counts in hover/table views. Nucleotides appear at readable zoom. The exact base table paginates 100 rows and supports a non-zero filter. PNG and SVG export use the visible resolution.
 
@@ -133,6 +133,16 @@ docker compose up -d --build
 ```
 
 The default Compose configuration publishes only `127.0.0.1:8767`. Data mounts are read-only and containers restart unless explicitly stopped. Put your access-controlled reverse proxy in front of it for team hosting. For a URL prefix such as `/epic-data-viewer/`, redirect the non-slash path to the slash path and strip that prefix when proxying; frontend URLs are relative. See `deploy/nginx.conf` for an example, including efficient direct downloads with byte-range support.
+
+### Deploy as a Rune
+
+For an existing Runes installation, clone this repository into `~/runes/runes/epic-data-viewer/src/`, copy `deploy/rune.compose.yaml` to the parent `compose.yaml`, and place `data_fixed/` and `parquet/` under `~/runes/data/epic-data-viewer/`. Use `deploy/runes-route.conf` as the gateway route. The gateway needs a read-only mount of the Parquet directory at `/downloads/epic-data-viewer`. Then run:
+
+```bash
+~/runes/bin/runes deploy epic-data-viewer
+```
+
+The route strips the URL prefix for app requests and serves verified Parquet files directly through Nginx. The viewer also supports streaming/ranged downloads itself when run without Nginx.
 
 ## Tests
 
