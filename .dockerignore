@@ -1,0 +1,8 @@
+*
+!viewer/
+!viewer/app.py
+!viewer/index.html
+!viewer/style.css
+!viewer/plot.js
+!viewer/viewer.js
+!Dockerfile

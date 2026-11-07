@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+raw/
+data/
+data_clean/
+data_fixed/
+parquet/
+*.parquet
+*.partial
+*.log
+.env
+.env.*
