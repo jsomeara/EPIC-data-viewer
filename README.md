@@ -11,7 +11,7 @@ No experimental data are included in this repository. EPIC's [data usage agreeme
 
 ## Install
 
-Python 3.12+, sufficient disk space, and the extracted source files are required. Allow at least 30 GB beyond the compressed source archives for reference indexes, Parquet output, and intermediate files. Exporting several billion base rows takes time; it streams bounded batches rather than loading the genomes into RAM.
+Python 3.12+ on Linux/macOS (or WSL), sufficient disk space, and the extracted source files are required. The exporter uses POSIX positional reads for concurrent validation; Docker also provides a Linux environment. Allow at least 30 GB beyond the compressed source archives for reference indexes, Parquet output, and intermediate files. Exporting several billion base rows takes time; it streams bounded batches rather than loading the genomes into RAM.
 
 ```bash
 git clone https://github.com/jsomeara/EPIC-data-viewer.git
